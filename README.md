@@ -13,7 +13,8 @@ the card.
 | Requirement | State |
 | --- | --- |
 | Vendor and product ID | done |
-| Vendor name / product name / serial string | done |
+| Vendor name / product name / serial string | done — up to 125 chars (USB protocol ceiling is 126) |
+| Per-image override of all USB parameters | done — `[image:<name>]`, falls back to `[usb]` |
 | Read-only mode on/off | done (real SCSI write-protect bit) |
 | Config file on SD card | done — `/usbstor.ini` |
 | Content selectable by config | done — image file, selectable by config or button |
@@ -106,6 +107,39 @@ pid     = 0x4010
 
 `capacity_mib` only ever **shrinks** the reported size — reporting blocks that
 are not backed by the file would hand the host storage that fails on access.
+
+### Per-image overrides
+
+An `[image:<file name>]` section overrides any `[usb]` or `[display]` key for
+that image only. Keys not listed there fall back to `[usb]`, and an image with
+no section of its own uses `[usb]` unchanged. The section name is matched
+case-insensitively against the file name.
+
+So each image can present itself as a completely different device — different
+VID/PID, strings, read-only state and display title — selected by `active` or
+by the button.
+
+### String lengths
+
+`vendor`, `product` and `serial` accept **up to 125 characters**. Longer values
+are truncated and the truncation is logged:
+
+```
+[usb] vendor is 135 chars, truncated to 125 (USB string descriptor limit)
+```
+
+125 is a protocol ceiling, not an implementation choice. A USB string
+descriptor's `bLength` is a single byte and the payload is UTF-16, so the
+absolute maximum is `(255 - 2) / 2 = 126` characters; the Arduino core copies
+through `snprintf(dst, 126, ...)`, which costs one more. **128-character or
+unlimited USB strings are not representable in a standard string descriptor.**
+
+Verified on hardware: a 121-character `product` and a 113-character `serial`
+arrive at the host intact.
+
+The SCSI inquiry strings (`scsi_vendor`, `scsi_product`, `scsi_revision`) are a
+separate, much tighter limit — **8 / 16 / 4 characters**, fixed-width fields in
+the SCSI INQUIRY response. Longer values are truncated.
 
 ## Controls
 

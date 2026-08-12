@@ -11,6 +11,8 @@ static USBMSC sMsc;
 static bool sReadOnly = true;
 static volatile bool sConnected = false;
 static String sSerial;
+static String sManufacturer;
+static String sProduct;
 
 // ---------------------------------------------------------------------------
 // SCSI write-protect
@@ -70,6 +72,15 @@ static void copyFixed(const String &src, char *dst, size_t width) {
   dst[n] = '\0';
 }
 
+// USB string descriptors cap at USB_STRING_MAX_CHARS; make any truncation
+// visible instead of letting the core silently shorten the value.
+static String clampUsbString(const String &value, const char *what) {
+  if (value.length() <= USB_STRING_MAX_CHARS) return value;
+  LOGF("[usb] %s is %u chars, truncated to %u (USB string descriptor limit)\n",
+       what, (unsigned)value.length(), (unsigned)USB_STRING_MAX_CHARS);
+  return value.substring(0, USB_STRING_MAX_CHARS);
+}
+
 static String defaultSerial() {
   uint8_t mac[6] = {0};
   esp_efuse_mac_get_default(mac);
@@ -87,13 +98,18 @@ bool usbMscBegin(const AppConfig &cfg) {
   }
 
   sReadOnly = cfg.usb.readOnly;
-  sSerial = cfg.usb.serial.length() ? cfg.usb.serial : defaultSerial();
+  sSerial = clampUsbString(
+      cfg.usb.serial.length() ? cfg.usb.serial : defaultSerial(), "serial");
+  sManufacturer = clampUsbString(cfg.usb.manufacturer, "vendor");
+  sProduct = clampUsbString(cfg.usb.product, "product");
 
-  // Descriptor fields must all be set before USB.begin().
+  // Descriptor fields must all be set before USB.begin(). The core copies
+  // these into its own String members, so our copies only need to outlive
+  // this call -- but they are static anyway.
   USB.VID(cfg.usb.vid);
   USB.PID(cfg.usb.pid);
-  USB.manufacturerName(cfg.usb.manufacturer.c_str());
-  USB.productName(cfg.usb.product.c_str());
+  USB.manufacturerName(sManufacturer.c_str());
+  USB.productName(sProduct.c_str());
   USB.serialNumber(sSerial.c_str());
   USB.onEvent(onUsbEvent);
 
@@ -121,10 +137,13 @@ bool usbMscBegin(const AppConfig &cfg) {
 
   USB.begin();
 
-  log_i("USB %04X:%04X '%s' / '%s' serial '%s' %s, %u blocks", cfg.usb.vid,
-        cfg.usb.pid, cfg.usb.manufacturer.c_str(), cfg.usb.product.c_str(),
-        sSerial.c_str(), sReadOnly ? "read-only" : "read/write",
-        (unsigned)blocks);
+  LOGF("[usb] %04X:%04X vendor(%u)='%s'\n", cfg.usb.vid, cfg.usb.pid,
+       (unsigned)sManufacturer.length(), sManufacturer.c_str());
+  LOGF("[usb] product(%u)='%s'\n", (unsigned)sProduct.length(),
+       sProduct.c_str());
+  LOGF("[usb] serial(%u)='%s' %s, %u blocks\n", (unsigned)sSerial.length(),
+       sSerial.c_str(), sReadOnly ? "read-only" : "read/write",
+       (unsigned)blocks);
   return true;
 }
 
