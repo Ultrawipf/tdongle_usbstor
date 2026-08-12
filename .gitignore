@@ -1,0 +1,5 @@
+.pio/
+.vscode/
+*.img
+*.bin
+!boards/*.json
