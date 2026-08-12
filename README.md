@@ -1,66 +1,64 @@
 # usb_stor_emu
 
-Turns a **LilyGO T-Dongle-S3** into a USB mass storage device whose USB identity,
+Turn a **LilyGO T-Dongle-S3** into a USB mass storage device whose USB identity,
 capacity and content are defined by a config file on its microSD card.
 
-The dongle serves the raw sectors of a **disk image file** on the SD card. The
-host owns the filesystem inside that image, so reads and writes behave exactly
-like a real stick — and only the selected image is visible, never the rest of
-the card.
+The dongle serves a **disk image file** from the SD card. The host owns the
+filesystem inside that image, so reads and writes behave exactly like a real
+USB stick — and only the selected image is visible, never the rest of the card.
 
-## Status
+## Features
 
-| Requirement | State |
-| --- | --- |
-| Vendor and product ID | done |
-| Vendor name / product name / serial string | done — up to 125 chars (USB protocol ceiling is 126) |
-| Per-image override of all USB parameters | done — `[image:<name>]`, falls back to `[usb]` |
-| Read-only mode on/off | done (real SCSI write-protect bit) |
-| Config file on SD card | done — `/usbstor.ini` |
-| Content selectable by config | done — image file, selectable by config or button |
-| Only active content visible | done — nothing but the chosen image is exposed |
-| Status LED (connection, access) | done — APA102 |
-| Capacity *(optional)* | done — `capacity_mib` (shrink only) |
-| Custom string IDs *(optional)* | done — SCSI inquiry strings |
-| Status display *(optional)* | done — title, image name, size, RO/RW, activity |
-| Maintenance mode *(added)* | done — full raw SD passthrough over USB |
-| Other T-Dongle variants *(optional)* | pin definitions present, untested |
+- Configurable vendor ID, product ID, vendor name, product name and serial
+- Configurable SCSI inquiry strings
+- Read-only mode, enforced with a real write-protect bit
+- Multiple images on one card, switchable by config file or by button
+- Per-image USB identity — each image can present itself as a different device
+- Reported capacity can be reduced independently of the image size
+- Maintenance mode exposes the whole SD card over USB for config edits
+- Status LED for connection and read/write activity
+- Status display showing the active image, size, mode and activity
+- Creates a working config and image automatically on a blank card
 
-Verified on hardware: enumerates as `303A:4002 "LILYGO FlexDisk"`, mounts a
-64 MiB FAT16 volume, 1 MiB write round-trips byte-identically and survives a
-reboot, and `readonly = true` makes Windows report *"The media is write
-protected."*
+## Quick start
 
-## Content model
+1. Flash the firmware (see [Building](#building)).
+2. Insert a microSD card and plug the dongle in.
+3. On a blank card the firmware creates `/usbstor.ini` and a 64 MiB
+   `/images/disk1.img`, then presents it as a USB stick. This takes about
+   30 seconds, shown on the display.
+4. Edit `/usbstor.ini` to change the USB identity, then replug.
 
-MSC is a **block** device, so the unit of content is a disk image, not a folder.
-The workflow is `folder -> image -> SD card`:
+## Putting content on the device
+
+USB mass storage is a block device, so content is packaged as a disk image:
 
 ```
 python tools/make_image.py content/ disk1.img --size 64 --label MYDISK
 ```
 
-Then copy `disk1.img` into `/images` on the SD card. `make_image.py` writes an
-MBR plus a FAT16 (<512 MiB) or FAT32 (>=512 MiB) volume and populates it
-directly — no admin rights, no loop mounts.
+| Option | Meaning |
+| --- | --- |
+| `--size` | image size in MiB (default 64) |
+| `--label` | volume label, up to 11 characters |
+| `--blank` | create an empty image instead of copying a folder |
 
-Put several images in `/images` and pick between them with the config file or
-the BOOT button.
+FAT16 is used below 512 MiB and FAT32 at or above it. No admin rights needed.
+
+Copy the resulting image into `/images` on the SD card, either with a card
+reader or through [maintenance mode](#maintenance-mode).
 
 ## SD card layout
 
 ```
-/usbstor.ini          configuration (auto-created on first run)
+/usbstor.ini          configuration
 /images/disk1.img     one or more *.img / *.bin / *.iso / *.dsk files
 ```
 
-On a card with no images, the firmware creates `/images/disk1.img` (64 MiB,
-formatted FAT16) and a documented `/usbstor.ini`, so a blank card yields a
-working stick without a card reader. This takes ~30 s, shown on the display.
-
 ## Configuration
 
-`/usbstor.ini`. Numbers accept decimal or `0x` hex; `;` and `#` start comments.
+All settings live in `/usbstor.ini`. Numbers accept decimal or `0x` hex, and
+`;` or `#` start a comment.
 
 ```ini
 [usb]
@@ -71,201 +69,148 @@ product  = T-Dongle-S3 Disk
 serial   =                  ; empty -> derived from the chip MAC
 readonly = false            ; true -> host mounts the volume write-protected
 
-scsi_vendor   = LILYGO      ; SCSI INQUIRY strings, max 8 / 16 / 4 chars
+scsi_vendor   = LILYGO      ; SCSI inquiry strings, max 8 / 16 / 4 characters
 scsi_product  = FlexDisk
 scsi_revision = 1.0
 
 capacity_mib  = 0           ; report a smaller capacity; 0 = full image size
 
 [content]
-dir    = /images
-active = disk1.img          ; button selection is written back here
-default_size_mib = 64       ; size of the image created on first run
+dir    = /images            ; directory scanned for images
+active = disk1.img          ; image to serve; button selection is saved here
+default_size_mib = 64       ; size of the image created on a blank card
 
 [display]
 enabled   = true
-backlight = 200
+backlight = 200             ; 0..255
 title     =                 ; empty -> falls back to the product name
 
 [led]
 enabled    = true
-brightness = 8              ; APA102 global current, 0..31
+brightness = 8              ; 0..31
+```
 
-; Per-image overrides. Section name must match the file name; any key from
-; [usb] or [display] is accepted.
+### Per-image settings
+
+An `[image:<file name>]` section overrides any `[usb]` or `[display]` setting
+for that image alone. Anything not listed falls back to `[usb]`, and an image
+without a section uses `[usb]` unchanged. Section names are matched
+case-insensitively against the file name.
+
+```ini
 [image:secret.img]
 product  = Secure Volume
+vid      = 0x1234
 pid      = 0x5678
 readonly = true
 title    = SECURE
+```
 
-; Optional. Overrides the maintenance-mode identity; same keys as [usb].
+This lets every image appear as a completely different device.
+
+### Maintenance settings
+
+An optional `[maintenance]` section overrides the identity used in maintenance
+mode, accepting the same keys as `[usb]`.
+
+```ini
 [maintenance]
 product = Dongle Service Mode
 pid     = 0x4010
 ```
 
-`capacity_mib` only ever **shrinks** the reported size — reporting blocks that
-are not backed by the file would hand the host storage that fails on access.
+### Limits
 
-### Per-image overrides
+`vendor`, `product` and `serial` accept up to **125 characters**. This is a USB
+protocol ceiling: a string descriptor's length field is a single byte and the
+text is stored as UTF-16. Longer values are truncated.
 
-An `[image:<file name>]` section overrides any `[usb]` or `[display]` key for
-that image only. Keys not listed there fall back to `[usb]`, and an image with
-no section of its own uses `[usb]` unchanged. The section name is matched
-case-insensitively against the file name.
+`capacity_mib` can only reduce the reported size below the real image size. A
+larger value is ignored, so the host is never offered space that does not exist.
 
-So each image can present itself as a completely different device — different
-VID/PID, strings, read-only state and display title — selected by `active` or
-by the button.
-
-### String lengths
-
-`vendor`, `product` and `serial` accept **up to 125 characters**. Longer values
-are truncated and the truncation is logged:
-
-```
-[usb] vendor is 135 chars, truncated to 125 (USB string descriptor limit)
-```
-
-125 is a protocol ceiling, not an implementation choice. A USB string
-descriptor's `bLength` is a single byte and the payload is UTF-16, so the
-absolute maximum is `(255 - 2) / 2 = 126` characters; the Arduino core copies
-through `snprintf(dst, 126, ...)`, which costs one more. **128-character or
-unlimited USB strings are not representable in a standard string descriptor.**
-
-Verified on hardware: a 121-character `product` and a 113-character `serial`
-arrive at the host intact.
-
-The SCSI inquiry strings (`scsi_vendor`, `scsi_product`, `scsi_revision`) are a
-separate, much tighter limit — **8 / 16 / 4 characters**, fixed-width fields in
-the SCSI INQUIRY response. Longer values are truncated.
+The SCSI inquiry strings are limited to 8, 16 and 4 characters respectively by
+the SCSI standard.
 
 ## Controls
 
-**BOOT button — runtime only.** GPIO0 held at reset puts the ROM into download
-mode, so the button can never reach this firmware during boot. Every gesture
-below is performed while the dongle is running.
+The dongle has a single button, **BOOT**, which is used while the device is
+running. Holding it during power-up does *not* reach the firmware — that
+combination is reserved by the chip for its own boot loader.
 
-- **Long press (>0.8 s)** → selector. Short presses cycle through the images
-  plus a final `MAINTENANCE` entry; a long press confirms, and 15 s of
-  inactivity confirms the current entry.
-- Picking a different image saves it to `usbstor.ini` and reboots.
-- Picking `MAINTENANCE` reboots into maintenance mode.
-- **Long press in maintenance mode** → back to normal.
+| Action | Result |
+| --- | --- |
+| Long press (hold ~1 s) | open the selector |
+| Short press in selector | move to the next entry |
+| Long press in selector | confirm the current entry |
+| No input for 15 s | confirm the current entry |
 
-Each transition reboots via `usb_persist_restart(RESTART_NO_PERSIST)`, which
-resets the USB peripheral and forces the host to re-enumerate. This is
-necessary rather than cosmetic: descriptors, SCSI strings and the reported
-capacity are all fixed at enumeration time.
+The selector cycles through every image on the card plus a final
+`MAINTENANCE` entry. Choosing a different image saves it as the active one and
+restarts; choosing `MAINTENANCE` enters maintenance mode.
+
+Each change restarts the dongle, because the USB identity and capacity are
+fixed while the device is connected.
 
 ## Maintenance mode
 
-Normally only the selected image is exposed, which means `/usbstor.ini` and
-`/images/` are unreachable from the host — good for isolation, awkward for
-configuration. Maintenance mode solves that by exposing the **entire physical
-SD card** instead, partition table included, so the config can be edited and
-new images dropped in over USB without opening the dongle.
+Normally only the selected image is visible to the host, which keeps the rest
+of the card private. Maintenance mode temporarily exposes the **entire SD card**
+instead, so the config can be edited and new images added over USB without
+removing the card.
 
-It presents a deliberately different identity so the host does not reuse cached
-geometry from the normal device:
+Enter it from the selector, and leave it with a long press. It appears as a
+separate device:
 
 | | Normal | Maintenance |
 | --- | --- | --- |
-| PID | `pid` | `pid + 1` |
-| Product | `product` | `product` + ` SD` |
-| SCSI product | `scsi_product` | `SD CARD` |
-| Content | selected image | whole card |
-| Write access | per `readonly` | always writable |
+| Product ID | `pid` | `pid + 1` |
+| Product name | `product` | `product` + ` SD` |
+| Content | the selected image | the whole card |
+| Write access | as configured | always writable |
 
-Override any of it with a `[maintenance]` section, which accepts the same keys
-as `[usb]`.
+Maintenance mode never survives unplugging the dongle, so a power cycle always
+returns it to normal operation.
 
-Maintenance mode is held in RTC memory that survives a software restart but not
-a power cycle, so unplugging always returns the dongle to normal operation.
+## Status indicators
 
-Internally this unmounts the FATFS/VFS layer and drives the SDMMC host directly
-(`src/rawsd.cpp`), since block access has to sit below the filesystem. Once
-entered, no further filesystem access is possible until the next reboot.
-
-**Status LED (APA102)**
+**LED**
 
 | Colour | Meaning |
 | --- | --- |
-| Red | no SD card / no image |
-| Amber | ready, host has not enumerated |
+| Red | no SD card or no image found |
+| Amber | ready, waiting for a host |
 | Green | host connected |
-| Blue flash | read access |
-| Magenta flash | write access |
-| Cyan | image selection mode |
-| White | maintenance mode (raw card exposed) |
+| Blue flash | read activity |
+| Magenta flash | write activity |
+| Cyan | selector open |
+| White | maintenance mode |
 
-**Display** shows the title, active image name, size, RO/RW and connection or
-access state.
+**Display** shows the title, the active image, its size, read-only or
+read/write, and the current connection or activity state.
 
-## Building and flashing
+## Building
 
-Uses the PlatformIO already installed with VS Code:
+Requires [PlatformIO](https://platformio.org/). From the project directory:
 
 ```
-C:\Users\Yannick\.platformio\penv\Scripts\pio.exe run
-C:\Users\Yannick\.platformio\penv\Scripts\pio.exe run -t upload --upload-port COMx
+pio run                       # build
+pio run -t upload             # build and flash
 ```
 
-### USB mode caveat
+The dongle also provides a USB serial console at 115200 baud, which reports the
+active configuration and any problems with the card or config file.
 
-The stock LilyGO board definition builds with `ARDUINO_USB_MODE=1` (hardware
-USB-Serial-JTAG), which cannot do MSC. This project ships its own board
-definition in `boards/tdongle-s3-msc.json` with `ARDUINO_USB_MODE=0` (TinyUSB).
+### Entering the boot loader
 
-`ARDUINO_USB_CDC_ON_BOOT` must stay **0**. With it enabled the Arduino core
-calls `USB.begin()` before `setup()` runs, freezing the descriptors before the
-config file has been read — the device then enumerates with Espressif's default
-`303A:1001` no matter what the config says. The CDC console is instead started
-by `src/logbuf.cpp` after the descriptors are set and before `USB.begin()`.
+Once the firmware is running, the dongle presents itself as a mass storage
+device rather than a programmer, so flashing needs the boot loader:
 
-Because the console appears late, everything logged during SD mount, config
-parsing and image creation is buffered (4 KB, `esp_log` included) and replayed
-when a host opens the port.
-
-### Getting back into the bootloader
-
-Once this firmware runs, the ROM serial port is gone and `esptool` cannot
-auto-reset. Two options:
-
-- **1200 baud touch** — opening the CDC port at 1200 baud triggers
-  `usb_persist_restart(RESTART_BOOTLOADER)`; the dongle reappears as a
-  USB-Serial-JTAG port ready for flashing. This is what the Arduino IDE does.
-- **BOOT button** — unplug, hold BOOT, plug back in, release.
-
-## Layout
-
-| Path | Role |
-| --- | --- |
-| `boards/tdongle-s3-msc.json` | board definition with TinyUSB enabled |
-| `src/config.cpp` | INI parser, per-image overrides, active-image write-back |
-| `src/storage.cpp` | SD_MMC 4-bit mount, image-file block device (mutex-guarded) |
-| `src/rawsd.cpp` | raw SDMMC block access for maintenance mode |
-| `src/usb_msc.cpp` | descriptors, SCSI strings, write-protect callback |
-| `src/provision.cpp` | first-run config + MBR/FAT16 image creation |
-| `src/display.cpp` | dependency-free ST7735 driver and status screens |
-| `src/status_led.cpp` | bit-banged APA102 |
-| `src/logbuf.cpp` | boot log buffer + USB CDC console |
-| `tools/make_image.py` | folder -> FAT16/FAT32 image builder |
-
-### Read-only implementation note
-
-Making a host mount a volume read-only requires the SCSI write-protect bit,
-which TinyUSB reads from `tud_msc_is_writable_cb()`. The Arduino core never
-defines it, so TinyUSB's weak default ("always writable") applies. `usb_msc.cpp`
-defines the symbol itself, overriding the weak default at link time. Writes are
-additionally rejected in the storage layer, and a read-only image is opened
-without write access at all, so the card cannot be modified even by a host that
-ignores the bit.
+- **Automatic** — `pio run -t upload` handles this on most systems.
+- **Manual** — unplug the dongle, hold **BOOT**, plug it back in, then release.
 
 ## Hardware
 
-T-Dongle-S3: ESP32-S3, 16 MB flash, no PSRAM.
+Built for the LilyGO T-Dongle-S3 (ESP32-S3, 16 MB flash).
 
 | Function | Pins |
 | --- | --- |
@@ -274,8 +219,5 @@ T-Dongle-S3: ESP32-S3, 16 MB flash, no PSRAM.
 | APA102 LED | DI 40, CI 39 |
 | Button | BOOT (GPIO 0) |
 
-Panel settings follow the vendor factory example: colour inverted, BGR order,
-gap x=1 / y=26, landscape via MADCTL `MY|MV`.
-
-For the `-Plus` / `-Dual` variants see the commented `build_flags` in
-`platformio.ini`; the extra pins are defined in `src/pins.h` but untested.
+The `-Plus` and `-Dual` variants have additional pins defined; see the
+commented build flags in `platformio.ini`.

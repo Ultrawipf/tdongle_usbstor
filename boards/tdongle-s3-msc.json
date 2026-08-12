@@ -48,6 +48,8 @@
         "maximum_ram_size": 327680,
         "maximum_size": 16777216,
         "require_upload_port": true,
+        "use_1200bps_touch": true,
+        "wait_for_upload_port": true,
         "speed": 921600
     },
     "url": "https://lilygo.cc/products/t-dongle-s3",
