@@ -13,6 +13,10 @@ enum LedState {
 
 void ledBegin(uint8_t brightness);  // brightness 0..31 (APA102 global current)
 void ledSetEnabled(bool enabled);
+// When enabled, the steady LED_READY colour is suppressed: the LED stays dark
+// while the host has the volume mounted and nothing is being accessed. Access
+// blinks and every other state are unaffected.
+void ledSetIdleOff(bool enabled);
 void ledSetState(LedState state);
 
 // Call regularly from loop(); overlays short read/write access blinks on top of

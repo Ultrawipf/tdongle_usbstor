@@ -23,6 +23,14 @@ void displayEnd();
 bool displayAvailable();
 void displaySetBacklight(uint8_t level);
 
+// Idle sleep: backlight off + DISPOFF, keeping the panel initialised so that
+// displayWake() is instant. Drawing calls made while asleep are simply not
+// visible; displayWake() invalidates the status cache so the next
+// displayStatus() repaints everything.
+void displaySleep();
+void displayWake();
+bool displayAsleep();
+
 void displayFill(uint16_t color);
 void displayFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 // Draws `text` at (x,y). Characters are 6*scale wide and 8*scale tall.

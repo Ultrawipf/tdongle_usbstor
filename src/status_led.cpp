@@ -6,6 +6,7 @@
 
 static uint8_t sBrightness = 8;
 static bool sEnabled = true;
+static bool sIdleOff = false;
 static LedState sState = LED_IDLE;
 static uint32_t sLastSent = 0xFFFFFFFF;
 
@@ -17,6 +18,15 @@ static inline void shiftByte(uint8_t b) {
   }
 }
 
+// The APA102 global-current field alone is a poor dimmer -- even at 1/31 the
+// LED is still glaring -- so the PWM values are scaled by the same setting.
+// The result is quadratic in `brightness`; a lit channel never rounds to off.
+static inline uint8_t dim(uint8_t v) {
+  if (!v) return 0;
+  uint16_t scaled = (uint16_t)v * sBrightness / 31;
+  return scaled ? (uint8_t)scaled : 1;
+}
+
 // APA102 frame: 4 zero bytes, one LED frame, then >= n/2 bits of end frame.
 static void sendColor(uint8_t r, uint8_t g, uint8_t b) {
   shiftByte(0x00);
@@ -25,9 +35,9 @@ static void sendColor(uint8_t r, uint8_t g, uint8_t b) {
   shiftByte(0x00);
 
   shiftByte(0xE0 | (sBrightness & 0x1F));
-  shiftByte(b);
-  shiftByte(g);
-  shiftByte(r);
+  shiftByte(dim(b));
+  shiftByte(dim(g));
+  shiftByte(dim(r));
 
   shiftByte(0xFF);
 }
@@ -46,6 +56,8 @@ void ledSetEnabled(bool enabled) {
   sEnabled = enabled;
   if (!enabled) ledOff();
 }
+
+void ledSetIdleOff(bool enabled) { sIdleOff = enabled; }
 
 void ledSetState(LedState state) { sState = state; }
 
@@ -72,6 +84,11 @@ void ledUpdate(uint32_t lastReadMs, uint32_t lastWriteMs) {
     r = 255; g = 0; b = 255;  // magenta
   } else if (lastReadMs && (uint32_t)(now - lastReadMs) < ACCESS_BLINK_MS) {
     r = 0; g = 80; b = 255;   // blue
+  } else if (sIdleOff && sState == LED_READY) {
+    // Mounted and quiet carries no information worth a lit LED; any access
+    // above relights it immediately. Errors, idle, select and maintenance are
+    // deliberately left alone.
+    r = 0; g = 0; b = 0;
   }
 
   uint32_t packed = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;

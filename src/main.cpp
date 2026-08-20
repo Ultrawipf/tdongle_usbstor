@@ -37,6 +37,8 @@ static size_t gImageCount = 0;
 static String gActiveImage;
 static bool gRunning = false;
 static bool gMaintenance = false;
+// Last button press; the display sleeps this many ms after it.
+static uint32_t gLastInput = 0;
 
 // Survives a software restart but not a power cycle, which is exactly the
 // lifetime maintenance mode should have.
@@ -68,6 +70,12 @@ static bool btnWaitRelease() {
     if ((millis() - start) > 5000) break;  // stuck button guard
   }
   return (millis() - start) >= BTN_LONG_PRESS_MS;
+}
+
+// Brings the panel back and restarts the idle countdown.
+static void wakeDisplay() {
+  displayWake();
+  gLastInput = millis();
 }
 
 // ---------------------------------------------------------------------------
@@ -334,8 +342,10 @@ void setup() {
   if (!gConfig.title.length()) gConfig.title = gConfig.usb.product;
 
   ledSetState(LED_IDLE);
+  ledSetIdleOff(gConfig.ledOffWhenIdle);
   displayInvalidate();
   displayFill(COLOR_BLACK);
+  gLastInput = millis();
   gRunning = true;
 
   LOGF("[ready] serving %s (%llu MiB) as %s\n", gActiveImage.c_str(),
@@ -370,9 +380,18 @@ void loop() {
   }
   ledUpdate(lastRead, lastWrite);
 
-  if (gConfig.displayEnabled) {
+  if (gConfig.displayEnabled && !displayAsleep()) {
     displayStatus(gConfig.title, gActiveImage, storageImageSizeBytes(),
                   gConfig.usb.readOnly, connected, reading, writing);
+
+    // Only the button counts as input: host activity would keep the panel lit
+    // for as long as the dongle is plugged in, which is the whole point of the
+    // timeout. The LED is intentionally not affected here.
+    if (gConfig.displayIdleTimeoutS &&
+        (now - gLastInput) >= gConfig.displayIdleTimeoutS * 1000UL) {
+      displaySleep();
+      LOGF("%s\n", "[display] idle, screen off");
+    }
   }
 
   // The button is only usable at runtime: GPIO0 held at reset puts the ROM into
@@ -382,10 +401,28 @@ void loop() {
     return;
   }
   delay(BTN_DEBOUNCE_MS);
-  if (!btnDown() || !btnWaitRelease()) {
+  if (!btnDown()) {
     delay(20);
     return;
   }
+
+  // A press that wakes the screen is consumed, so a long press cannot fall
+  // through into the selector (or out of maintenance mode) unseen.
+  if (displayAsleep()) {
+    wakeDisplay();  // light it up on press, not on release
+    btnWaitRelease();
+    gLastInput = millis();
+    LOGF("%s\n", "[display] button, screen on");
+    delay(20);
+    return;
+  }
+
+  if (!btnWaitRelease()) {
+    gLastInput = millis();
+    delay(20);
+    return;
+  }
+  gLastInput = millis();
 
   if (gMaintenance) {
     // Any long press leaves maintenance mode and returns to serving an image.
@@ -398,6 +435,7 @@ void loop() {
   LOGF("%s\n", "[select] entering selection");
   storageFlush();
   size_t chosen = runSelector(indexOfImage(gActiveImage));
+  gLastInput = millis();
 
   if (chosen == SELECT_MAINTENANCE(gImageCount)) {
     displayMessage("MAINTENANCE", "Entering", "restarting...", COLOR_CYAN);
@@ -418,5 +456,6 @@ void loop() {
 
   displayInvalidate();
   displayFill(COLOR_BLACK);
+  gLastInput = millis();
   delay(20);
 }

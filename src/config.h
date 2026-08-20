@@ -37,8 +37,14 @@ struct AppConfig {
   uint8_t backlight = 200;  // 0..255
   String title = "";        // empty -> falls back to usb.product
 
+  // Seconds without a button press before the panel is switched off. 0 keeps
+  // it on forever. Host activity deliberately does not postpone this.
+  uint32_t displayIdleTimeoutS = 60;
+
   bool ledEnabled = true;
-  uint8_t ledBrightness = 8;  // APA102 global current, 0..31
+  uint8_t ledBrightness = 4;  // 0..31, scales both current and PWM
+  // Go dark while the host has the volume mounted and idle.
+  bool ledOffWhenIdle = true;
 };
 
 // Parses CONFIG_PATH from the SD card into `cfg`. Missing file or missing keys

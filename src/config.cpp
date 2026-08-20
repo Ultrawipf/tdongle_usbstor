@@ -133,11 +133,13 @@ static void applyPair(AppConfig &cfg, const String &section, const String &key,
   if (section == "display" || !basePass) {
     if (key == "enabled") cfg.displayEnabled = iniParseBool(value, cfg.displayEnabled);
     else if (key == "backlight") cfg.backlight = (uint8_t)iniParseNumber(value, cfg.backlight);
+    else if (key == "idle_timeout") cfg.displayIdleTimeoutS = iniParseNumber(value, cfg.displayIdleTimeoutS);
     else if (key == "title") cfg.title = value;
   }
 
   if (section == "led") {
     if (key == "enabled") cfg.ledEnabled = iniParseBool(value, cfg.ledEnabled);
+    else if (key == "off_when_idle") cfg.ledOffWhenIdle = iniParseBool(value, cfg.ledOffWhenIdle);
     else if (key == "brightness") {
       uint32_t b = iniParseNumber(value, cfg.ledBrightness);
       cfg.ledBrightness = (uint8_t)(b > 31 ? 31 : b);

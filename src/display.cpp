@@ -16,6 +16,8 @@
 
 static SPIClass sSpi(FSPI);
 static bool sReady = false;
+static bool sAsleep = false;
+static uint8_t sBacklight = 0;  // level requested while awake
 
 // ---------------------------------------------------------------------------
 // low level
@@ -112,6 +114,19 @@ static const InitCmd ST7735_INIT[] = {
     {0x29, 0, 100, {}},                                   // DISPON
 };
 
+// Writes the PWM duty for `level` (0..255), attaching the LEDC channel on the
+// first call. Backlight is active low, so full brightness is duty 0.
+static void backlightDuty(uint8_t level) {
+  static bool attached = false;
+  if (!attached) {
+    ledcSetup(LCD_LEDC_CHANNEL, LCD_LEDC_FREQ, LCD_LEDC_BITS);
+    ledcAttachPin(LCD_BL_PIN, LCD_LEDC_CHANNEL);
+    attached = true;
+  }
+  uint32_t duty = LCD_BL_ACTIVE_LEVEL == 0 ? (255 - level) : level;
+  ledcWrite(LCD_LEDC_CHANNEL, duty);
+}
+
 bool displayBegin(uint8_t backlight) {
   pinMode(LCD_CS_PIN, OUTPUT);
   pinMode(LCD_DC_PIN, OUTPUT);
@@ -142,24 +157,40 @@ bool displayBegin(uint8_t backlight) {
 
 void displayEnd() {
   if (!sReady) return;
-  displaySetBacklight(0);
+  backlightDuty(0);
   lcdCmd(0x28);  // DISPOFF
   sReady = false;
+  sAsleep = false;
 }
 
 bool displayAvailable() { return sReady; }
 
 void displaySetBacklight(uint8_t level) {
-  static bool attached = false;
-  if (!attached) {
-    ledcSetup(LCD_LEDC_CHANNEL, LCD_LEDC_FREQ, LCD_LEDC_BITS);
-    ledcAttachPin(LCD_BL_PIN, LCD_LEDC_CHANNEL);
-    attached = true;
-  }
-  // Backlight is active low, so full brightness is duty 0.
-  uint32_t duty = LCD_BL_ACTIVE_LEVEL == 0 ? (255 - level) : level;
-  ledcWrite(LCD_LEDC_CHANNEL, duty);
+  sBacklight = level;
+  // While asleep the level is only remembered; waking applies it.
+  if (!sAsleep) backlightDuty(level);
 }
+
+// Idle sleep. Unlike displayEnd() this keeps the panel initialised, so waking
+// is a single DISPON instead of the ~300 ms reset dance in displayBegin().
+void displaySleep() {
+  if (!sReady || sAsleep) return;
+  backlightDuty(0);
+  lcdCmd(0x28);  // DISPOFF
+  sAsleep = true;
+}
+
+void displayWake() {
+  if (!sReady || !sAsleep) return;
+  sAsleep = false;
+  lcdCmd(0x29);  // DISPON
+  backlightDuty(sBacklight);
+  // The panel kept its framebuffer, but the caller may have skipped updates
+  // while it was off, so force a full repaint.
+  displayInvalidate();
+}
+
+bool displayAsleep() { return sAsleep; }
 
 // ---------------------------------------------------------------------------
 // drawing

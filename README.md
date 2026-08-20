@@ -16,8 +16,10 @@ USB stick — and only the selected image is visible, never the rest of the card
 - Per-image USB identity — each image can present itself as a different device
 - Reported capacity can be reduced independently of the image size
 - Maintenance mode exposes the whole SD card over USB for config edits
-- Status LED for connection and read/write activity
-- Status display showing the active image, size, mode and activity
+- Status LED for connection and read/write activity, dimmable and able to go
+  dark while the host is connected but idle
+- Status display showing the active image, size, mode and activity, switched
+  off after an idle timeout and woken with the button
 - Creates a working config and image automatically on a blank card
 
 ## Quick start
@@ -83,11 +85,16 @@ default_size_mib = 64       ; size of the image created on a blank card
 [display]
 enabled   = true
 backlight = 200             ; 0..255
+idle_timeout = 60           ; seconds without a button press before the screen
+                            ; switches off; 0 keeps it on. Host activity does
+                            ; not postpone it.
 title     =                 ; empty -> falls back to the product name
 
 [led]
 enabled    = true
-brightness = 8              ; 0..31
+brightness = 4              ; 0..31; scales current and PWM, so the curve is
+                            ; steep: 4 is dim, 16 bright, 31 blinding
+off_when_idle = true        ; dark while the host has it mounted and idle
 ```
 
 ### Per-image settings
@@ -139,10 +146,19 @@ combination is reserved by the chip for its own boot loader.
 
 | Action | Result |
 | --- | --- |
+| Any press while the screen is off | wake the screen, nothing else |
 | Long press (hold ~1 s) | open the selector |
 | Short press in selector | move to the next entry |
 | Long press in selector | confirm the current entry |
 | No input for 15 s | confirm the current entry |
+
+The screen switches itself off after `idle_timeout` seconds without a button
+press — reads and writes from the host deliberately do not keep it awake. The
+press that wakes it is consumed, so a long press cannot slip through into the
+selector or out of maintenance mode. The LED is not tied to this timeout: it
+keeps showing errors, activity, selection and maintenance, and with
+`off_when_idle` only goes dark in the one uninformative state, mounted and
+quiet.
 
 The selector cycles through every image on the card plus a final
 `MAINTENANCE` entry. Choosing a different image saves it as the active one and
